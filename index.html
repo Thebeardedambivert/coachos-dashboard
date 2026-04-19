@@ -1163,7 +1163,7 @@ td.primary { color: var(--ink); font-weight: 700; }
         <div>
           <div class="section-head">
             <div class="section-title">Upcoming Sessions</div>
-            <a class="section-action">Cal.com →</a>
+            <a class="section-action" onclick="joinSession()" style="cursor:pointer">Cal.com →</a>
           </div>
           <div class="card" id="sessions-list">
             <!-- populated by JS -->
@@ -1436,7 +1436,7 @@ function mapProspects(records) {
 }
 
 function mapClients(records, checkinRecords) {
-  // Build a lookup: clientName/id → most recent check-in date
+  // Build a lookup: clientId → most recent check-in date string
   const lastCheckinMap = {};
   checkinRecords.forEach(ci => {
     const clientRef = (ci.Client && Array.isArray(ci.Client)) ? ci.Client[0] : ci.Client;
@@ -1447,19 +1447,39 @@ function mapClients(records, checkinRecords) {
   });
 
   return records.map((r, i) => {
-    const clientId     = r._id;
-    const lastRaw      = lastCheckinMap[clientId] || '';
-    const lastCheckin  = lastRaw ? daysSince(lastRaw) : 'No data';
-    const health       = computeHealth(r, lastRaw);
+    const clientId = r._id;
+
+    // ── Five health-score inputs ───────────────────────────────────────────
+    // Session completion
+    const sessCompleted = typeof r['SessionsCompleted'] === 'number' ? r['SessionsCompleted']
+                        : typeof r['Sessions Completed'] === 'number' ? r['Sessions Completed'] : 0;
+    const sessTotal     = typeof r['SessionsTotal'] === 'number' ? r['SessionsTotal']
+                        : typeof r['Sessions Total'] === 'number' ? r['Sessions Total'] : 0;
+
+    // Last check-in: prefer explicit Airtable field, then fall back to CheckIns table lookup
+    const lastCheckinRaw = r['LastCheckin'] || r['Last Checkin'] || r['Last Check-in']
+                         || lastCheckinMap[clientId] || '';
+
+    // Missed counts
+    const missedSessions = typeof r['MissedSessions'] === 'number' ? r['MissedSessions']
+                         : typeof r['Missed Sessions'] === 'number' ? r['Missed Sessions'] : 0;
+    const missedCheckins = typeof r['MissedCheckins'] === 'number' ? r['MissedCheckins']
+                         : typeof r['Missed Checkins'] === 'number' ? r['Missed Checkins'] : 0;
+
+    const health = computeHealth(sessCompleted, sessTotal, lastCheckinRaw, missedSessions, missedCheckins);
+
+    // Friendly display text for last check-in
+    const lastCheckin  = lastCheckinRaw ? daysSince(lastCheckinRaw) : 'No data';
+
     const contractEnd  = r['Contract End Date'] || r['End Date'] || '—';
-    const sessCount    = typeof r['Sessions Completed'] === 'number' ? r['Sessions Completed']
-                        : typeof r['Total Sessions'] === 'number'    ? r['Total Sessions']
-                        : '—';
+    // Sessions display: prefer sessCompleted/sessTotal fraction, else raw fallback
+    const sessCount    = sessTotal > 0 ? `${sessCompleted}/${sessTotal}`
+                       : sessCompleted > 0 ? `${sessCompleted}` : '—';
 
     const daysLeft = contractEnd !== '—' ? (new Date(contractEnd) - new Date()) / 86400000 : Infinity;
     let risk = 'low';
-    if (health < 50)   risk = 'high';
-    else if (daysLeft >= 0 && daysLeft <= 30) risk = 'renewal';
+    if (health < 50)                           risk = 'high';
+    else if (daysLeft >= 0 && daysLeft <= 30)  risk = 'renewal';
 
     return {
       id:          i + 1,
@@ -1509,15 +1529,39 @@ function daysSince(dateStr) {
   return `${diff} days ago`;
 }
 
-function computeHealth(r, lastCheckinStr) {
-  // Use explicit field if present
-  if (typeof r['Health Score'] === 'number') return Math.min(100, Math.max(0, r['Health Score']));
-  // Otherwise derive from last check-in recency
-  const days = lastCheckinStr ? Math.floor((Date.now() - new Date(lastCheckinStr)) / 86400000) : 30;
-  if (days <= 3)  return 88;
-  if (days <= 7)  return 72;
-  if (days <= 14) return 55;
-  return 38;
+/**
+ * Compute a 0–100 health score from five Airtable fields.
+ *
+ * Component breakdown (max 100):
+ *   Session completion rate  (sessCompleted / sessTotal) × 40   → up to 40 pts
+ *   Recency score            based on days since lastCheckinStr  → up to 30 pts
+ *   Missed session penalty   −5 per missed session
+ *   Missed check-in penalty  −2 per missed check-in
+ */
+function computeHealth(sessCompleted, sessTotal, lastCheckinStr, missedSessions, missedCheckins) {
+  // 1. Session completion rate → 0–40 pts
+  let sessionScore = 0;
+  if (sessTotal > 0) {
+    sessionScore = Math.min(1, sessCompleted / sessTotal) * 40;
+  }
+
+  // 2. Recency score → 0–30 pts (linear interpolation over key thresholds)
+  let recencyScore = 0;
+  if (lastCheckinStr) {
+    const days = Math.floor((Date.now() - new Date(lastCheckinStr)) / 86400000);
+    if (days <= 0)       recencyScore = 30;
+    else if (days <= 7)  recencyScore = 30 - ((days / 7) * 10);  // 30 → 20 over 0–7 days
+    else if (days <= 14) recencyScore = 20 - (((days - 7) / 7) * 10); // 20 → 10 over 7–14 days
+    else if (days < 30)  recencyScore = 10 - (((days - 14) / 16) * 10); // 10 → 0 over 14–30 days
+    else                 recencyScore = 0;
+  }
+
+  // 3. Penalties
+  const missedSessionPenalty = (missedSessions || 0) * 5;
+  const missedCheckinPenalty = (missedCheckins || 0) * 2;
+
+  const raw = sessionScore + recencyScore - missedSessionPenalty - missedCheckinPenalty;
+  return Math.min(100, Math.max(0, Math.round(raw)));
 }
 
 function buildProgramLabel(r) {
@@ -1801,11 +1845,60 @@ function renderSessions() {
         </div>
       </div>
       <div class="session-actions">
-        <button class="btn btn-outline btn-sm">Notes</button>
-        <button class="btn btn-teal btn-sm">Join</button>
+        <button class="btn btn-outline btn-sm" onclick="prefillNotesForm(${JSON.stringify(s.client)}, ${JSON.stringify(s.sessionDate)})">Notes</button>
+        <button class="btn btn-teal btn-sm" onclick="joinSession()">Join</button>
       </div>
     </div>
   `).join('');
+}
+
+/**
+ * Pre-fills the Log Session Notes form with the given client name and date,
+ * switches to the Sessions view if needed, and scrolls the form into view.
+ */
+function prefillNotesForm(clientName, sessionDate) {
+  // Make sure the Sessions view is active so the form is visible
+  const sessView = document.getElementById('view-sessions');
+  if (sessView && !sessView.classList.contains('active')) {
+    switchView('sessions');
+  }
+
+  // Client selector — match by value or option text
+  const sel = document.getElementById('notes-client');
+  if (sel && clientName) {
+    // Try to find the option whose text matches the client name
+    const opt = Array.from(sel.options).find(
+      o => o.value === clientName || o.textContent.trim() === clientName
+    );
+    if (opt) {
+      sel.value = opt.value;
+    } else {
+      // Fallback: set the value directly (works when options are keyed by name)
+      sel.value = clientName;
+    }
+  }
+
+  // Date field — convert ISO date string (YYYY-MM-DD) to the input format
+  const dateEl = document.getElementById('notes-date');
+  if (dateEl && sessionDate) {
+    // sessionDate may be a full ISO timestamp; slice to YYYY-MM-DD
+    dateEl.value = sessionDate.slice(0, 10);
+  }
+
+  // Scroll the notes card into view smoothly
+  const notesCard = document.querySelector('.notes-card');
+  if (notesCard) {
+    notesCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Brief highlight pulse so the user knows it was filled
+    notesCard.style.transition = 'box-shadow 0.3s';
+    notesCard.style.boxShadow = '0 0 0 3px rgba(13,148,136,0.35)';
+    setTimeout(() => { notesCard.style.boxShadow = ''; }, 1200);
+  }
+}
+
+/** Opens the coach's Cal.com booking page in a new tab. */
+function joinSession() {
+  window.open('https://cal.com/nwachukwu-cyril-st5fot', '_blank', 'noopener');
 }
 
 function renderNotificationsFromClients() {
