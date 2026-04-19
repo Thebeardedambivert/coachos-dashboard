@@ -867,6 +867,110 @@ td.primary { color: var(--ink); font-weight: 700; }
   @media (max-width: 400px) {
     .mobile-cards-table td[data-label="DocuSeal ID"] { display: none; }
   }
+
+  /* ── SLIDE-OUT PANEL → bottom sheet on mobile ── */
+  .detail-panel {
+    /* Full width, slide up from bottom instead of in from the right */
+    top: auto;
+    bottom: 0;
+    right: 0;
+    left: 0;
+    width: 100vw;
+    height: 90vh;           /* leave a sliver of the overlay visible at top */
+    max-height: 90vh;
+    border-left: none;
+    border-top: 1px solid var(--slate3);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -8px 40px rgba(15,23,42,0.16);
+    /* reset right-slide transform, use bottom-slide instead */
+    transform: translateY(100%);
+    transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
+  }
+  .detail-panel.open {
+    transform: translateY(0);
+  }
+
+  /* Drag handle visual affordance */
+  .panel-header::before {
+    content: '';
+    display: block;
+    width: 40px;
+    height: 4px;
+    background: var(--slate4);
+    border-radius: 2px;
+    margin: 0 auto 14px;
+  }
+
+  /* Close button — always in top-right, z above everything */
+  .panel-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 10;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  /* Panel header padding so person row doesn't collide with close btn */
+  .panel-header {
+    padding: 16px 16px 0;
+  }
+
+  /* Person row: leave room on the right for the close button */
+  .panel-person {
+    padding-right: 44px;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  /* Panel action buttons: wrap below the name on narrow screens */
+  .panel-actions {
+    margin-left: 0;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .panel-btn {
+    flex: 1;
+    justify-content: center;
+    min-height: 40px;
+  }
+
+  /* Tabs: scroll horizontally, never clip */
+  .panel-tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;          /* Firefox */
+    flex-shrink: 0;
+  }
+  .panel-tabs::-webkit-scrollbar { display: none; }
+  .panel-tab {
+    flex-shrink: 0;                 /* tabs never shrink — scroll instead */
+    padding: 10px 18px;
+  }
+
+  /* Panel body: full padding, nothing clips, scrollable */
+  .panel-body {
+    padding: 16px 16px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    /* bottom safe-area for devices with a home indicator */
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Field grid: single column on very small screens */
+  .panel-field-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  @media (max-width: 380px) {
+    .panel-field-grid { grid-template-columns: 1fr; }
+  }
+
+  /* Panel name: slightly smaller so it doesn't overflow */
+  .panel-name { font-size: 18px; }
 }
 </style>
 </head>
